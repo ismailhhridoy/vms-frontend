@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/constants/app_strings.dart';
-import '../../data/mock_vehicle_repository.dart';
+import '../../core/network/api_client.dart';
+import '../../data/vehicle_repository.dart';
 import '../../models/vehicle.dart';
 import '../../models/vehicle_status.dart';
 import '../../models/vehicle_type.dart';
@@ -27,6 +28,9 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
   late VehicleType _selectedType;
   late VehicleStatus _selectedStatus;
 
+  bool _isSaving = false;
+  String? _serverErrorMessage;
+
   bool get _isEditing => widget.initialVehicle != null;
 
   @override
@@ -39,8 +43,9 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
     _brandController = TextEditingController(text: v?.brand ?? '');
     _modelController = TextEditingController(text: v?.model ?? '');
 
+    final availableCompanies = VehicleRepository.instance.companies;
     _selectedCompany =
-        v?.company ?? MockVehicleRepository.defaultCompanies.first;
+        v?.company ?? availableCompanies.first;
     _selectedType = v?.type ?? VehicleType.sedan;
     _selectedStatus = v?.status ?? VehicleStatus.active;
   }
@@ -53,41 +58,75 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
     super.dispose();
   }
 
-  void _handleSave() {
+  Future<void> _handleSave() async {
     if (!_formKey.currentState!.validate()) {
       return;
     }
+
+    setState(() {
+      _isSaving = true;
+      _serverErrorMessage = null;
+    });
 
     final vehicleNumber = _vehicleNumberController.text.trim().toUpperCase();
     final brand = _brandController.text.trim();
     final model = _modelController.text.trim();
 
-    if (_isEditing) {
-      final updated = widget.initialVehicle!.copyWith(
-        vehicleNumber: vehicleNumber,
-        company: _selectedCompany,
-        type: _selectedType,
-        brand: brand,
-        model: model,
-        status: _selectedStatus,
-      );
-      MockVehicleRepository.instance.updateVehicle(updated);
-      _showSuccessSnackBar('Vehicle $vehicleNumber updated successfully.');
-    } else {
-      final newVehicle = Vehicle(
-        id: 'vms-${DateTime.now().millisecondsSinceEpoch % 10000}',
-        vehicleNumber: vehicleNumber,
-        company: _selectedCompany,
-        type: _selectedType,
-        brand: brand,
-        model: model,
-        status: _selectedStatus,
-      );
-      MockVehicleRepository.instance.addVehicle(newVehicle);
-      _showSuccessSnackBar('Vehicle $vehicleNumber registered successfully.');
-    }
+    try {
+      final repo = VehicleRepository.instance;
 
-    Navigator.of(context).pop();
+      if (_isEditing) {
+        final id = widget.initialVehicle!.id;
+        if (id == null) {
+          throw const ApiException('Invalid vehicle record ID');
+        }
+
+        final updated = widget.initialVehicle!.copyWith(
+          vehicleNumber: vehicleNumber,
+          company: _selectedCompany,
+          type: _selectedType,
+          brand: brand,
+          model: model,
+          status: _selectedStatus,
+        );
+
+        await repo.updateVehicle(id, updated);
+        if (!mounted) return;
+        _showSuccessSnackBar('Vehicle $vehicleNumber updated successfully.');
+      } else {
+        final newVehicle = Vehicle(
+          vehicleNumber: vehicleNumber,
+          company: _selectedCompany,
+          type: _selectedType,
+          brand: brand,
+          model: model,
+          status: _selectedStatus,
+        );
+
+        await repo.createVehicle(newVehicle);
+        if (!mounted) return;
+        _showSuccessSnackBar('Vehicle $vehicleNumber registered successfully.');
+      }
+
+      Navigator.of(context).pop();
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _serverErrorMessage = e.userFriendlyMessage;
+      });
+      _showErrorSnackBar(e.userFriendlyMessage);
+    } catch (e) {
+      if (!mounted) return;
+      final msg = 'Failed to save vehicle: $e';
+      setState(() {
+        _serverErrorMessage = msg;
+      });
+      _showErrorSnackBar(msg);
+    } finally {
+      if (mounted) {
+        setState(() => _isSaving = false);
+      }
+    }
   }
 
   void _showSuccessSnackBar(String message) {
@@ -102,6 +141,24 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
           ],
         ),
         backgroundColor: const Color(0xFF16A34A),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+    );
+  }
+
+  void _showErrorSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.error_outline_rounded,
+                color: Colors.white, size: 20),
+            const SizedBox(width: 10),
+            Expanded(child: Text(message)),
+          ],
+        ),
+        backgroundColor: AppColors.error,
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       ),
@@ -135,6 +192,11 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
                         children: [
                           _buildFormHeader(title),
                           const Divider(height: 36, thickness: 1),
+
+                          if (_serverErrorMessage != null) ...[
+                            _buildErrorBanner(),
+                            const SizedBox(height: 12),
+                          ],
 
                           // GROUP 1: Identity & Corporate Organization
                           _buildSectionTitle(
@@ -238,6 +300,56 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildErrorBanner() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppColors.error.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: AppColors.error.withValues(alpha: 0.3),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.error_outline_rounded,
+              color: AppColors.error, size: 20),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Unable to save vehicle',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                    color: AppColors.error,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  _serverErrorMessage ?? '',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close_rounded, size: 16, color: AppColors.textSecondary),
+            onPressed: () => setState(() => _serverErrorMessage = null),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+          ),
+        ],
       ),
     );
   }
@@ -398,7 +510,7 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
   }
 
   Widget _buildCompanyDropdown() {
-    final companies = MockVehicleRepository.instance.companies;
+    final companies = VehicleRepository.instance.companies;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
@@ -569,15 +681,26 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               ElevatedButton.icon(
-                onPressed: _handleSave,
-                icon: const Icon(Icons.check_rounded, size: 18),
+                onPressed: _isSaving ? null : _handleSave,
+                icon: _isSaving
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(Icons.check_rounded, size: 18),
                 label: Text(
-                  _isEditing ? AppStrings.save : AppStrings.registerVehicle,
+                  _isSaving
+                      ? 'Saving...'
+                      : (_isEditing ? AppStrings.save : AppStrings.registerVehicle),
                 ),
               ),
               const SizedBox(height: 12),
               OutlinedButton.icon(
-                onPressed: () => Navigator.of(context).pop(),
+                onPressed: _isSaving ? null : () => Navigator.of(context).pop(),
                 icon: const Icon(Icons.close_rounded, size: 18),
                 label: const Text(AppStrings.cancel),
               ),
@@ -589,16 +712,27 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
           mainAxisAlignment: MainAxisAlignment.end,
           children: [
             OutlinedButton.icon(
-              onPressed: () => Navigator.of(context).pop(),
+              onPressed: _isSaving ? null : () => Navigator.of(context).pop(),
               icon: const Icon(Icons.close_rounded, size: 18),
               label: const Text(AppStrings.cancel),
             ),
             const SizedBox(width: 14),
             ElevatedButton.icon(
-              onPressed: _handleSave,
-              icon: const Icon(Icons.check_rounded, size: 18),
+              onPressed: _isSaving ? null : _handleSave,
+              icon: _isSaving
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Icon(Icons.check_rounded, size: 18),
               label: Text(
-                _isEditing ? AppStrings.save : AppStrings.registerVehicle,
+                _isSaving
+                    ? 'Saving...'
+                    : (_isEditing ? AppStrings.save : AppStrings.registerVehicle),
               ),
             ),
           ],

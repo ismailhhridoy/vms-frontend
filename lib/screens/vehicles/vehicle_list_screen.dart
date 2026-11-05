@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/constants/app_strings.dart';
+import '../../core/network/api_client.dart';
 import '../../core/routes/app_routes.dart';
-import '../../data/mock_vehicle_repository.dart';
+import '../../data/vehicle_repository.dart';
 import '../../models/vehicle.dart';
 import '../../models/vehicle_status.dart';
 import '../../widgets/confirmation_dialog.dart';
@@ -22,6 +23,22 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
   String? _selectedCompanyFilter;
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadData();
+    });
+  }
+
+  Future<void> _loadData() async {
+    await VehicleRepository.instance.fetchVehicles(
+      searchQuery: _searchController.text,
+      statusFilter: _selectedStatusFilter,
+      companyFilter: _selectedCompanyFilter,
+    );
+  }
+
+  @override
   void dispose() {
     _searchController.dispose();
     super.dispose();
@@ -33,6 +50,7 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
       _selectedStatusFilter = null;
       _selectedCompanyFilter = null;
     });
+    _loadData();
   }
 
   bool get _hasActiveFilters =>
@@ -41,26 +59,50 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
       _selectedCompanyFilter != null;
 
   void _onDeleteVehicle(Vehicle vehicle) {
+    if (vehicle.id == null) return;
+
     ConfirmationDialog.show(
       context,
       title: AppStrings.deleteConfirmTitle,
       message:
           'Are you sure you want to remove ${vehicle.vehicleNumber} (${vehicle.brand} ${vehicle.model} - ${vehicle.company}) from Stark Group fleet records?',
-      onConfirm: () {
-        MockVehicleRepository.instance.deleteVehicle(vehicle.id);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('${vehicle.vehicleNumber} successfully removed.'),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
+      onConfirm: () async {
+        try {
+          await VehicleRepository.instance.deleteVehicle(vehicle.id!);
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('${vehicle.vehicleNumber} successfully removed.'),
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: const Color(0xFF16A34A),
+            ),
+          );
+        } on ApiException catch (e) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Delete failed: ${e.userFriendlyMessage}'),
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: AppColors.error,
+            ),
+          );
+        } catch (e) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to delete vehicle: $e'),
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: AppColors.error,
+            ),
+          );
+        }
       },
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final repo = MockVehicleRepository.instance;
+    final repo = VehicleRepository.instance;
 
     return ListenableBuilder(
       listenable: repo,
@@ -73,19 +115,23 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
 
         return Scaffold(
           backgroundColor: AppColors.background,
-          body: SingleChildScrollView(
-            padding: const EdgeInsets.all(24.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _buildHeader(repo.totalCount, filteredVehicles.length),
-                const SizedBox(height: 20),
-                _buildStatCards(repo),
-                const SizedBox(height: 24),
-                _buildFilterBar(repo),
-                const SizedBox(height: 16),
-                _buildTableCard(filteredVehicles, repo.totalCount),
-              ],
+          body: RefreshIndicator(
+            onRefresh: _loadData,
+            child: SingleChildScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.all(24.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildHeader(repo, filteredVehicles.length),
+                  const SizedBox(height: 20),
+                  _buildStatCards(repo),
+                  const SizedBox(height: 24),
+                  _buildFilterBar(repo),
+                  const SizedBox(height: 16),
+                  _buildTableCard(repo, filteredVehicles),
+                ],
+              ),
             ),
           ),
         );
@@ -93,7 +139,9 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
     );
   }
 
-  Widget _buildHeader(int totalFleetCount, int filteredCount) {
+  Widget _buildHeader(VehicleRepository repo, int filteredCount) {
+    final totalFleetCount = repo.totalCount;
+
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -134,6 +182,23 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
                       ),
                     ),
                   ),
+                  const SizedBox(width: 8),
+                  if (repo.isLoading)
+                    const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: AppColors.primary,
+                      ),
+                    )
+                  else
+                    IconButton(
+                      icon: const Icon(Icons.refresh_rounded, size: 18),
+                      tooltip: 'Refresh fleet data from server',
+                      onPressed: _loadData,
+                      visualDensity: VisualDensity.compact,
+                    ),
                 ],
               ),
               const SizedBox(height: 4),
@@ -151,7 +216,7 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
     );
   }
 
-  Widget _buildStatCards(MockVehicleRepository repo) {
+  Widget _buildStatCards(VehicleRepository repo) {
     return LayoutBuilder(
       builder: (context, constraints) {
         final crossAxisCount = constraints.maxWidth >= 1000
@@ -205,7 +270,7 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
     );
   }
 
-  Widget _buildFilterBar(MockVehicleRepository repo) {
+  Widget _buildFilterBar(VehicleRepository repo) {
     return Card(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -224,6 +289,7 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
                   child: TextField(
                     controller: _searchController,
                     onChanged: (_) => setState(() {}),
+                    onSubmitted: (_) => _loadData(),
                     decoration: InputDecoration(
                       hintText: AppStrings.searchPlaceholder,
                       prefixIcon: const Icon(Icons.search_rounded, size: 20),
@@ -233,6 +299,7 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
                               onPressed: () {
                                 _searchController.clear();
                                 setState(() {});
+                                _loadData();
                               },
                             )
                           : null,
@@ -276,6 +343,7 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
                           ],
                           onChanged: (comp) {
                             setState(() => _selectedCompanyFilter = comp);
+                            _loadData();
                           },
                         ),
                       ],
@@ -310,6 +378,7 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
                           ],
                           onChanged: (status) {
                             setState(() => _selectedStatusFilter = status);
+                            _loadData();
                           },
                         ),
                       ],
@@ -337,285 +406,385 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
     );
   }
 
-  Widget _buildTableCard(List<Vehicle> vehicles, int totalFleetCount) {
+  Widget _buildTableCard(VehicleRepository repo, List<Vehicle> vehicles) {
+    if (repo.isLoading && repo.vehicles.isEmpty) {
+      return Card(
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(vertical: 80),
+          child: const Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(color: AppColors.primary),
+              SizedBox(height: 16),
+              Text(
+                'Connecting to backend and loading fleet data...',
+                style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (repo.hasError && repo.vehicles.isEmpty) {
+      return Card(
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(vertical: 60, horizontal: 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: AppColors.error.withValues(alpha: 0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.cloud_off_rounded,
+                  size: 36,
+                  color: AppColors.error,
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Unable to Load Fleet Data',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 8),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 500),
+                child: Text(
+                  repo.errorMessage ?? 'An error occurred while connecting to the backend server.',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: AppColors.textSecondary,
+                    height: 1.4,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
+              ElevatedButton.icon(
+                onPressed: _loadData,
+                icon: const Icon(Icons.refresh_rounded, size: 18),
+                label: const Text('Retry Connection'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     if (vehicles.isEmpty) {
-      return _buildEmptyState(totalFleetCount);
+      return _buildEmptyState(repo.totalCount);
     }
 
     return Card(
       clipBehavior: Clip.antiAlias,
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          return SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: ConstrainedBox(
-              constraints: BoxConstraints(minWidth: constraints.maxWidth),
-              child: DataTable(
-                headingRowHeight: 48,
-                dataRowMinHeight: 62,
-                dataRowMaxHeight: 68,
-                columnSpacing: 28,
-                horizontalMargin: 20,
-                columns: const [
-                  DataColumn(
-                    label: Text(
-                      AppStrings.fieldVehicleNumber,
-                      style: TextStyle(fontWeight: FontWeight.bold),
+      child: Column(
+        children: [
+          if (repo.hasError)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              color: AppColors.error.withValues(alpha: 0.1),
+              child: Row(
+                children: [
+                  const Icon(Icons.warning_amber_rounded, size: 18, color: AppColors.error),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Failed to sync with server: ${repo.errorMessage}',
+                      style: const TextStyle(color: AppColors.error, fontSize: 12),
                     ),
                   ),
-                  DataColumn(
-                    label: Text(
-                      AppStrings.fieldStatus,
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                  DataColumn(
-                    label: Text(
-                      AppStrings.fieldCompany,
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                  DataColumn(
-                    label: Text(
-                      AppStrings.fieldBrand,
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                  DataColumn(
-                    label: Text(
-                      AppStrings.fieldModel,
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                  DataColumn(
-                    label: Text(
-                      AppStrings.fieldType,
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                  DataColumn(
-                    label: Text(
-                      'Actions',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
+                  TextButton(
+                    onPressed: _loadData,
+                    child: const Text('Retry', style: TextStyle(fontSize: 12)),
                   ),
                 ],
-                rows: vehicles.map((vehicle) {
-                  return DataRow(
-                    cells: [
-                      // Highlighted Vehicle Number
-                      DataCell(
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 6),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFEFF6FF), // soft blue slate
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(
-                              color: AppColors.primaryLight
-                                  .withValues(alpha: 0.28),
-                              width: 1,
-                            ),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.tag_rounded,
-                                size: 13,
-                                color: AppColors.primary.withValues(alpha: 0.7),
-                              ),
-                              const SizedBox(width: 5),
-                              Text(
-                                vehicle.vehicleNumber,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w700,
-                                  fontFamily: 'monospace',
-                                  fontSize: 13,
-                                  color: AppColors.primary,
-                                  letterSpacing: 0.3,
-                                ),
-                              ),
-                            ],
-                          ),
+              ),
+            ),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              return SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(minWidth: constraints.maxWidth),
+                  child: DataTable(
+                    headingRowHeight: 48,
+                    dataRowMinHeight: 62,
+                    dataRowMaxHeight: 68,
+                    columnSpacing: 28,
+                    horizontalMargin: 20,
+                    columns: const [
+                      DataColumn(
+                        label: Text(
+                          AppStrings.fieldVehicleNumber,
+                          style: TextStyle(fontWeight: FontWeight.bold),
                         ),
                       ),
-
-                      // Highlighted Status Badge
-                      DataCell(StatusBadge(status: vehicle.status)),
-
-                      // Company
-                      DataCell(
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(
-                              Icons.business_rounded,
-                              size: 16,
-                              color: AppColors.textSecondary,
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              vehicle.company,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w500,
-                                color: AppColors.textPrimary,
-                              ),
-                            ),
-                          ],
+                      DataColumn(
+                        label: Text(
+                          AppStrings.fieldStatus,
+                          style: TextStyle(fontWeight: FontWeight.bold),
                         ),
                       ),
-
-                      // Brand
-                      DataCell(
-                        Text(
-                          vehicle.brand,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.textPrimary,
-                          ),
+                      DataColumn(
+                        label: Text(
+                          AppStrings.fieldCompany,
+                          style: TextStyle(fontWeight: FontWeight.bold),
                         ),
                       ),
-
-                      // Model
-                      DataCell(
-                        Text(
-                          vehicle.model,
-                          style: const TextStyle(
-                            color: AppColors.textPrimary,
-                          ),
+                      DataColumn(
+                        label: Text(
+                          AppStrings.fieldBrand,
+                          style: TextStyle(fontWeight: FontWeight.bold),
                         ),
                       ),
-
-                      // Type
-                      DataCell(
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            CircleAvatar(
-                              radius: 13,
-                              backgroundColor:
-                                  AppColors.primary.withValues(alpha: 0.08),
-                              child: Icon(
-                                vehicle.type.icon,
-                                size: 14,
-                                color: AppColors.primary,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              vehicle.type.label,
-                              style: const TextStyle(
-                                color: AppColors.textSecondary,
-                                fontSize: 13,
-                              ),
-                            ),
-                          ],
+                      DataColumn(
+                        label: Text(
+                          AppStrings.fieldModel,
+                          style: TextStyle(fontWeight: FontWeight.bold),
                         ),
                       ),
-
-                      // Clear, Distinct Actions
-                      DataCell(
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            // Clear Edit Action
-                            Tooltip(
-                              message: 'Edit vehicle specifications',
-                              child: InkWell(
-                                borderRadius: BorderRadius.circular(8),
-                                onTap: () {
-                                  Navigator.of(context).pushNamed(
-                                    AppRoutes.vehicleEdit,
-                                    arguments: vehicle,
-                                  );
-                                },
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 10, vertical: 6),
-                                  decoration: BoxDecoration(
-                                    color: AppColors.primary
-                                        .withValues(alpha: 0.08),
-                                    borderRadius: BorderRadius.circular(8),
-                                    border: Border.all(
-                                      color: AppColors.primary
-                                          .withValues(alpha: 0.2),
-                                    ),
-                                  ),
-                                  child: const Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(
-                                        Icons.edit_outlined,
-                                        size: 14,
-                                        color: AppColors.primary,
-                                      ),
-                                      SizedBox(width: 4),
-                                      Text(
-                                        'Edit',
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w600,
-                                          color: AppColors.primary,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-
-                            // Clear Delete Action
-                            Tooltip(
-                              message: 'Delete vehicle record',
-                              child: InkWell(
-                                borderRadius: BorderRadius.circular(8),
-                                onTap: () => _onDeleteVehicle(vehicle),
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 10, vertical: 6),
-                                  decoration: BoxDecoration(
-                                    color: AppColors.error
-                                        .withValues(alpha: 0.08),
-                                    borderRadius: BorderRadius.circular(8),
-                                    border: Border.all(
-                                      color: AppColors.error
-                                          .withValues(alpha: 0.2),
-                                    ),
-                                  ),
-                                  child: const Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(
-                                        Icons.delete_outline_rounded,
-                                        size: 14,
-                                        color: AppColors.error,
-                                      ),
-                                      SizedBox(width: 4),
-                                      Text(
-                                        'Delete',
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w600,
-                                          color: AppColors.error,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
+                      DataColumn(
+                        label: Text(
+                          AppStrings.fieldType,
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      DataColumn(
+                        label: Text(
+                          'Actions',
+                          style: TextStyle(fontWeight: FontWeight.bold),
                         ),
                       ),
                     ],
-                  );
-                }).toList(),
-              ),
-            ),
-          );
-        },
+                    rows: vehicles.map((vehicle) {
+                      return DataRow(
+                        cells: [
+                          // Highlighted Vehicle Number
+                          DataCell(
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFEFF6FF),
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(
+                                  color: AppColors.primaryLight
+                                      .withValues(alpha: 0.28),
+                                  width: 1,
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.tag_rounded,
+                                    size: 13,
+                                    color: AppColors.primary.withValues(alpha: 0.7),
+                                  ),
+                                  const SizedBox(width: 5),
+                                  Text(
+                                    vehicle.vehicleNumber,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w700,
+                                      fontFamily: 'monospace',
+                                      fontSize: 13,
+                                      color: AppColors.primary,
+                                      letterSpacing: 0.3,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+
+                          // Highlighted Status Badge
+                          DataCell(StatusBadge(status: vehicle.status)),
+
+                          // Company
+                          DataCell(
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(
+                                  Icons.business_rounded,
+                                  size: 16,
+                                  color: AppColors.textSecondary,
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  vehicle.company,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w500,
+                                    color: AppColors.textPrimary,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+
+                          // Brand
+                          DataCell(
+                            Text(
+                              vehicle.brand,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.textPrimary,
+                              ),
+                            ),
+                          ),
+
+                          // Model
+                          DataCell(
+                            Text(
+                              vehicle.model,
+                              style: const TextStyle(
+                                color: AppColors.textPrimary,
+                              ),
+                            ),
+                          ),
+
+                          // Type
+                          DataCell(
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                CircleAvatar(
+                                  radius: 13,
+                                  backgroundColor:
+                                      AppColors.primary.withValues(alpha: 0.08),
+                                  child: Icon(
+                                    vehicle.type.icon,
+                                    size: 14,
+                                    color: AppColors.primary,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  vehicle.type.label,
+                                  style: const TextStyle(
+                                    color: AppColors.textSecondary,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+
+                          // Clear, Distinct Actions
+                          DataCell(
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                // Clear Edit Action
+                                Tooltip(
+                                  message: 'Edit vehicle specifications',
+                                  child: InkWell(
+                                    borderRadius: BorderRadius.circular(8),
+                                    onTap: () async {
+                                      await Navigator.of(context).pushNamed(
+                                        AppRoutes.vehicleEdit,
+                                        arguments: vehicle,
+                                      );
+                                      await _loadData();
+                                    },
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 10, vertical: 6),
+                                      decoration: BoxDecoration(
+                                        color: AppColors.primary
+                                            .withValues(alpha: 0.08),
+                                        borderRadius: BorderRadius.circular(8),
+                                        border: Border.all(
+                                          color: AppColors.primary
+                                              .withValues(alpha: 0.2),
+                                        ),
+                                      ),
+                                      child: const Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(
+                                            Icons.edit_outlined,
+                                            size: 14,
+                                            color: AppColors.primary,
+                                          ),
+                                          SizedBox(width: 4),
+                                          Text(
+                                            'Edit',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w600,
+                                              color: AppColors.primary,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+
+                                // Clear Delete Action
+                                Tooltip(
+                                  message: 'Delete vehicle record',
+                                  child: InkWell(
+                                    borderRadius: BorderRadius.circular(8),
+                                    onTap: () => _onDeleteVehicle(vehicle),
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 10, vertical: 6),
+                                      decoration: BoxDecoration(
+                                        color: AppColors.error
+                                            .withValues(alpha: 0.08),
+                                        borderRadius: BorderRadius.circular(8),
+                                        border: Border.all(
+                                          color: AppColors.error
+                                              .withValues(alpha: 0.2),
+                                        ),
+                                      ),
+                                      child: const Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(
+                                            Icons.delete_outline_rounded,
+                                            size: 14,
+                                            color: AppColors.error,
+                                          ),
+                                          SizedBox(width: 4),
+                                          Text(
+                                            'Delete',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w600,
+                                              color: AppColors.error,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      );
+                    }).toList(),
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
       ),
     );
   }
@@ -693,8 +862,9 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
                   )
                 else
                   ElevatedButton.icon(
-                    onPressed: () {
-                      Navigator.of(context).pushNamed(AppRoutes.vehicleNew);
+                    onPressed: () async {
+                      await Navigator.of(context).pushNamed(AppRoutes.vehicleNew);
+                      await _loadData();
                     },
                     icon: const Icon(Icons.add_rounded, size: 18),
                     label: const Text(AppStrings.registerVehicle),

@@ -10,7 +10,7 @@ class MockVehicleRepository extends ChangeNotifier {
 
   final List<Vehicle> _vehicles = [
     const Vehicle(
-      id: 'vms-01',
+      id: 1,
       vehicleNumber: 'SG-TRK-1042',
       company: 'Stark Logistics',
       type: VehicleType.truck,
@@ -19,7 +19,7 @@ class MockVehicleRepository extends ChangeNotifier {
       status: VehicleStatus.active,
     ),
     const Vehicle(
-      id: 'vms-02',
+      id: 2,
       vehicleNumber: 'SG-SED-2018',
       company: 'Stark Industries',
       type: VehicleType.sedan,
@@ -28,7 +28,7 @@ class MockVehicleRepository extends ChangeNotifier {
       status: VehicleStatus.active,
     ),
     const Vehicle(
-      id: 'vms-03',
+      id: 3,
       vehicleNumber: 'SG-EV-3091',
       company: 'Stark Clean Energy',
       type: VehicleType.electric,
@@ -37,7 +37,7 @@ class MockVehicleRepository extends ChangeNotifier {
       status: VehicleStatus.active,
     ),
     const Vehicle(
-      id: 'vms-04',
+      id: 4,
       vehicleNumber: 'SG-VAN-4005',
       company: 'Stark Logistics',
       type: VehicleType.van,
@@ -46,7 +46,7 @@ class MockVehicleRepository extends ChangeNotifier {
       status: VehicleStatus.maintenance,
     ),
     const Vehicle(
-      id: 'vms-05',
+      id: 5,
       vehicleNumber: 'SG-SUV-5120',
       company: 'Stark Security',
       type: VehicleType.suv,
@@ -55,7 +55,7 @@ class MockVehicleRepository extends ChangeNotifier {
       status: VehicleStatus.active,
     ),
     const Vehicle(
-      id: 'vms-06',
+      id: 6,
       vehicleNumber: 'SG-TRK-1089',
       company: 'Stark Aerospace',
       type: VehicleType.truck,
@@ -64,7 +64,7 @@ class MockVehicleRepository extends ChangeNotifier {
       status: VehicleStatus.inactive,
     ),
     const Vehicle(
-      id: 'vms-07',
+      id: 7,
       vehicleNumber: 'SG-SED-2044',
       company: 'Stark Industries',
       type: VehicleType.sedan,
@@ -73,7 +73,7 @@ class MockVehicleRepository extends ChangeNotifier {
       status: VehicleStatus.active,
     ),
     const Vehicle(
-      id: 'vms-08',
+      id: 8,
       vehicleNumber: 'SG-EV-3012',
       company: 'Stark Clean Energy',
       type: VehicleType.electric,
@@ -151,7 +151,7 @@ class MockVehicleRepository extends ChangeNotifier {
     }
   }
 
-  void deleteVehicle(String id) {
+  void deleteVehicle(int id) {
     _vehicles.removeWhere((v) => v.id == id);
     notifyListeners();
   }

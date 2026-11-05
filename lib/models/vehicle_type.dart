@@ -11,5 +11,15 @@ enum VehicleType {
   final IconData icon;
 
   const VehicleType(this.label, this.icon);
-}
 
+  /// The uppercase string sent to/from the backend API
+  String get apiValue => name.toUpperCase();
+
+  /// Parse from backend API string (e.g. "SEDAN", "TRUCK")
+  static VehicleType fromApi(String value) {
+    return VehicleType.values.firstWhere(
+      (e) => e.name.toUpperCase() == value.toUpperCase(),
+      orElse: () => VehicleType.sedan,
+    );
+  }
+}

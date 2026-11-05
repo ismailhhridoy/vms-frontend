@@ -10,5 +10,15 @@ enum VehicleStatus {
   final Color backgroundColor;
 
   const VehicleStatus(this.label, this.foregroundColor, this.backgroundColor);
-}
 
+  /// The uppercase string sent to/from the backend API
+  String get apiValue => name.toUpperCase();
+
+  /// Parse from backend API string (e.g. "ACTIVE", "MAINTENANCE")
+  static VehicleStatus fromApi(String value) {
+    return VehicleStatus.values.firstWhere(
+      (e) => e.name.toUpperCase() == value.toUpperCase(),
+      orElse: () => VehicleStatus.active,
+    );
+  }
+}

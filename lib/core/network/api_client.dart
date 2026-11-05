@@ -30,11 +30,20 @@ class ApiResponse<T> {
 class ApiException implements Exception {
   final String message;
   final int? statusCode;
+  final Map<String, String>? validationErrors;
 
-  const ApiException(this.message, [this.statusCode]);
+  const ApiException(this.message, [this.statusCode, this.validationErrors]);
+
+  /// Returns a clean, user-facing error message
+  String get userFriendlyMessage {
+    if (validationErrors != null && validationErrors!.isNotEmpty) {
+      return validationErrors!.values.join('\n');
+    }
+    return message;
+  }
 
   @override
-  String toString() => 'ApiException(statusCode: $statusCode, message: $message)';
+  String toString() => userFriendlyMessage;
 }
 
 class ApiClient {
@@ -55,10 +64,23 @@ class ApiClient {
 
   Future<ApiResponse<T>> get<T>(
     String path, {
+    Map<String, dynamic>? queryParameters,
     Map<String, String>? headers,
     T Function(dynamic json)? fromJsonT,
   }) async {
-    final uri = Uri.parse('$_baseUrl$path');
+    Uri uri = Uri.parse('$_baseUrl$path');
+    if (queryParameters != null && queryParameters.isNotEmpty) {
+      final cleanParams = <String, String>{};
+      queryParameters.forEach((key, value) {
+        if (value != null && value.toString().trim().isNotEmpty) {
+          cleanParams[key] = value.toString().trim();
+        }
+      });
+      if (cleanParams.isNotEmpty) {
+        uri = uri.replace(queryParameters: cleanParams);
+      }
+    }
+
     try {
       final response = await _client
           .get(uri, headers: _buildHeaders(headers))
@@ -67,7 +89,9 @@ class ApiClient {
     } on ApiException {
       rethrow;
     } catch (e) {
-      throw ApiException(e.toString());
+      throw ApiException(
+        'Unable to connect to backend server ($e). Please verify the backend is running.',
+      );
     }
   }
 
@@ -90,7 +114,9 @@ class ApiClient {
     } on ApiException {
       rethrow;
     } catch (e) {
-      throw ApiException(e.toString());
+      throw ApiException(
+        'Unable to connect to backend server ($e). Please verify the backend is running.',
+      );
     }
   }
 
@@ -113,7 +139,9 @@ class ApiClient {
     } on ApiException {
       rethrow;
     } catch (e) {
-      throw ApiException(e.toString());
+      throw ApiException(
+        'Unable to connect to backend server ($e). Please verify the backend is running.',
+      );
     }
   }
 
@@ -131,7 +159,9 @@ class ApiClient {
     } on ApiException {
       rethrow;
     } catch (e) {
-      throw ApiException(e.toString());
+      throw ApiException(
+        'Unable to connect to backend server ($e). Please verify the backend is running.',
+      );
     }
   }
 
@@ -139,22 +169,43 @@ class ApiClient {
     http.Response response,
     T Function(dynamic json)? fromJsonT,
   ) {
-    if (response.statusCode >= 200 && response.statusCode < 300) {
-      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
-      return ApiResponse.fromJson(decoded, fromJsonT);
-    } else {
-      try {
-        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
-        throw ApiException(
-          decoded['message'] as String? ?? 'Request failed',
-          response.statusCode,
-        );
-      } on FormatException {
-        throw ApiException(
-          'HTTP ${response.statusCode}: ${response.reasonPhrase}',
-          response.statusCode,
-        );
+    Map<String, dynamic>? decoded;
+    try {
+      if (response.body.isNotEmpty) {
+        final parsed = jsonDecode(response.body);
+        if (parsed is Map<String, dynamic>) {
+          decoded = parsed;
+        }
       }
+    } catch (_) {
+      // Body is not JSON
     }
+
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      if (decoded != null) {
+        return ApiResponse.fromJson(decoded, fromJsonT);
+      }
+      return ApiResponse<T>(
+        success: true,
+        message: 'Success',
+        data: null,
+      );
+    }
+
+    // Error response handling
+    if (decoded != null) {
+      final message = decoded['message'] as String? ?? 'Request failed';
+      Map<String, String>? fieldErrors;
+      if (decoded['data'] is Map<String, dynamic>) {
+        final rawErrors = decoded['data'] as Map<String, dynamic>;
+        fieldErrors = rawErrors.map((k, v) => MapEntry(k, v.toString()));
+      }
+      throw ApiException(message, response.statusCode, fieldErrors);
+    }
+
+    throw ApiException(
+      'HTTP ${response.statusCode}: ${response.reasonPhrase ?? 'Unknown error'}',
+      response.statusCode,
+    );
   }
 }

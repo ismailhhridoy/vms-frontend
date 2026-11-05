@@ -1,9 +1,10 @@
 class ApiEndpoints {
   ApiEndpoints._();
 
-  // Base API sub-paths
-  static const String health = '/health';
+  static const String vehicles = '/vehicles';
+  static const String vehicleStats = '/vehicles/stats';
+  static const String vehicleCompanies = '/vehicles/companies';
+  static const String health = '/actuator/health';
 
-  // Future feature endpoint routes will be defined here (e.g. /vehicles, /drivers, etc.)
+  static String vehicleById(int id) => '$vehicles/$id';
 }
-
