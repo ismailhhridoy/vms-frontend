@@ -10,6 +10,6 @@ class AppConfig {
     defaultValue: 'http://localhost:8080/api/v1',
   );
 
-  static const Duration requestTimeout = Duration(seconds: 15);
+  // Increased to 60s to accommodate Render / free tier container cold starts
+  static const Duration requestTimeout = Duration(seconds: 60);
 }
-
